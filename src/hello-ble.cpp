@@ -2,6 +2,18 @@
 #include <iomanip>
 #include <simpleble/SimpleBLE.h>
 
+
+// from bluez5
+#define HEART_RATE_SERVICE_UUID		"0000180d-0000-1000-8000-00805f9b34fb"
+#define HEART_RATE_MEASUREMENT_UUID	"00002a37-0000-1000-8000-00805f9b34fb"
+#define BODY_SENSOR_LOCATION_UUID	"00002a38-0000-1000-8000-00805f9b34fb"
+#define HEART_RATE_CONTROL_POINT_UUID	"00002a39-0000-1000-8000-00805f9b34fb"
+
+#define DEVICE_INFORMATION_SERVICE_UUID	"0000180a-0000-1000-8000-00805f9b34fb"
+
+
+#define SEARCH_ID "COROS PACE 2 177FB1"
+
 void print_byte_array(const SimpleBLE::ByteArray &bytes)
 {
 	for (auto b : bytes)
@@ -29,6 +41,74 @@ void print_peripheral(SimpleBLE::Peripheral peripheral)
 	}
 }
 
+void print_peripherals(std::vector<SimpleBLE::Peripheral> peripherals)
+{
+	for (auto p : peripherals)
+	{
+		print_peripheral(p);
+	}
+}
+
+
+std::vector<SimpleBLE::Peripheral> scan_adapter(SimpleBLE::Adapter adapter, int timeout_ms)
+{
+	std::cout << "Adapter identifier: " << adapter.identifier() << std::endl;
+	std::cout << "Adapter address: " << adapter.address() << std::endl;
+
+	// Establish the list of peripherals to populate
+	std::vector<SimpleBLE::Peripheral> peripherals;
+
+	adapter.set_callback_on_scan_found([&](SimpleBLE::Peripheral peripheral)
+									   { peripherals.push_back(peripheral); });
+
+	// TODO: Actual callbacks on the scan - not just print...
+	adapter.set_callback_on_scan_start([]()
+									   { std::cout << "Scan started." << std::endl; });
+	adapter.set_callback_on_scan_stop([]()
+									  { std::cout << "Scan stopped." << std::endl; });
+	adapter.scan_for(timeout_ms);
+
+	return peripherals;
+}
+
+void print_services_and_chars(SimpleBLE::Peripheral* peripheral)
+{
+	for (auto &service : peripheral->services())
+	{
+		// Now find the characteristics of each service.
+		std::cout << "Service: " << service.uuid() << std::endl;
+
+		if (service.uuid().compare(HEART_RATE_SERVICE_UUID) == 0)
+		{
+			std::cout << "HEART RATE MONITOR FOUND" << std::endl;
+		}
+		else if (service.uuid().compare(DEVICE_INFORMATION_SERVICE_UUID) == 0)
+		{
+			std::cout << "CAN READ DEVICE INFO" << std::endl;
+		}
+
+		for (auto &characteristic : service.characteristics())
+		{
+			std::cout << "\tCharacteristic: " << characteristic.uuid() << std::endl;
+			continue; // temp
+
+			// And then capabilities...
+			std::cout << "\t\tCapabilities: ";
+			for (auto &capability : characteristic.capabilities())
+			{
+				std::cout << capability << " ";
+				if (characteristic.can_read()) {
+					SimpleBLE::ByteArray rx_data = peripheral->read(service.uuid(), characteristic.uuid());
+					print_byte_array(rx_data);
+				}
+			}
+			std::cout << std::endl;
+		}
+	}
+
+
+}
+
 int main(int argc, char **argv)
 {
 	if (!SimpleBLE::Adapter::bluetooth_enabled())
@@ -46,31 +126,23 @@ int main(int argc, char **argv)
 
 	// Use the first adapter - might be others in the future.
 	auto adapter = adapters[0];
+	auto peripherals = scan_adapter(adapter, 5000);
+//	print_peripherals(peripherals);
 
-	std::cout << "Adapter identifier: " << adapter.identifier() << std::endl;
-	std::cout << "Adapter address: " << adapter.address() << std::endl;
+	for (auto &peripheral : peripherals) {
+		if (peripheral.is_connectable()) {
+			std::cout << "Connecting to " << peripheral.identifier() << std::endl;
+			// TODO: catch the exception
+			peripheral.connect();
 
-	// Scan for peripherals for 5000 milliseconds
-
-	// Get the list of peripherals found
-	std::vector<SimpleBLE::Peripheral> peripherals;
-
-	adapter.set_callback_on_scan_found([&](SimpleBLE::Peripheral peripheral)
-									   { peripherals.push_back(peripheral); });
-
-	adapter.set_callback_on_scan_start([]()
-									   { std::cout << "Scan started." << std::endl; });
-	adapter.set_callback_on_scan_stop([]()
-									  { std::cout << "Scan stopped." << std::endl; });
-	adapter.scan_for(5000);
-
-	for (auto peripheral : peripherals)
-	{
-		print_peripheral(peripheral);
+			// get UUID, look for HRM
+			print_services_and_chars(&peripheral);
+			
+			peripheral.disconnect();
+		}
 	}
 
-	// Look for the one I want, which is my Zwift Hub. This could be anything of your choosing.
-	auto search_id = "Zwift Hub";
+	auto search_id = SEARCH_ID;
 	auto search_result = std::find_if(peripherals.begin(), peripherals.end(), [&](SimpleBLE::Peripheral peripheral)
 									  { return peripheral.identifier() == search_id; });
 	if (search_result == peripherals.end())
@@ -88,32 +160,9 @@ int main(int argc, char **argv)
 	search_result->connect();
 
 	std::cout << "Connected." << std::endl;
-
+//	print_services_and_chars(search_result);
 	// Find out the services
-	for (auto &service : search_result->services())
-	{
-		// Now find the characteristics of each service.
-		std::cout << "Service: " << service.uuid() << std::endl;
-
-		for (auto &characteristic : service.characteristics())
-		{
-			std::cout << "\tCharacteristic: " << characteristic.uuid() << std::endl;
-			// And then capabilities...
-			std::cout << "\t\tCapabilities: ";
-			for (auto &capability : characteristic.capabilities())
-			{
-				std::cout << capability << " ";
-			}
-			std::cout << std::endl;
-
-			for (auto &descriptor : characteristic.descriptors())
-			{
-				std::cout << "\t\tDescriptor: " << descriptor.uuid() << std::endl;
-			}
-		}
-	}
-
 	search_result->disconnect();
-
 	return 0;
+
 }
